@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Launch Calendar</title>
+
+<style>
+body { margin:0; font-family: Arial, sans-serif; background:#0b0f17; color:#e7ecf3; }
+header { padding:16px; border-bottom:1px solid #1b2333; position:sticky; top:0; background:#0b0f17; }
+h1 { margin:0; font-size:18px; }
+.controls { display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
+button,input { background:#121a2a; color:#e7ecf3; border:1px solid #23304a; padding:10px 12px; border-radius:10px; cursor:pointer; }
+main { max-width:980px; margin:auto; padding:16px; }
+.status { opacity:.85; margin:10px 0; }
+.grid { display:grid; grid-template-columns:1fr; gap:12px; }
+@media(min-width:720px){ .grid{ grid-template-columns:1fr 1fr; } }
+.card { background:#0f1522; border:1px solid #1b2333; border-radius:16px; padding:14px; }
+.badge { display:inline-block; padding:4px 8px; border-radius:999px; border:1px solid #263553; font-size:12px; margin-right:6px; }
+a { color:#7bb0ff; text-decoration:none; }
+a:hover{ text-decoration:underline; }
+</style>
+</head>
+
+<body>
+<header>
+<h1>🚀 Launch Calendar</h1>
+<div class="controls">
+<button id="todayBtn">Today</button>
+<button id="tomorrowBtn">Tomorrow</button>
+<input id="datePicker" type="date">
+<button id="refreshBtn">Refresh</button>
+<span id="lastUpdated" style="opacity:.7"></span>
+</div>
+</header>
+
+<main>
+<div class="status" id="status">Loading…</div>
+<div class="grid" id="cards"></div>
+</main>
+
+<script>
+const API = "https://ll.thespacedevs.com/2.3.0/launches/";
+const CACHE_KEY = "launchCache";
+const CACHE_TIME = 5 * 60 * 1000; // 5 minutes
+
+function pad(n){ return String(n).padStart(2,"0"); }
+function localDay(d){ return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
+function isoUTC(d){ return d.toISOString().split(".")[0]+"Z"; }
+
+async function fetchOnce() {
+  const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+  if (cached && Date.now() - cached.time < CACHE_TIME) {
+    return cached.data;
+  }
+
+  const now = new Date();
+  const start = new Date(now.getTime() - 48*3600000);
+  const end   = new Date(now.getTime() + 48*3600000);
+
+  const url = API + "?" + new URLSearchParams({
+    mode:"detailed",
+    limit:"100",
+    ordering:"net",
+    net__gte: isoUTC(start),
+    net__lt: isoUTC(end)
+  });
+
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("API error: " + r.status);
+  const j = await r.json();
+
+  localStorage.setItem(CACHE_KEY, JSON.stringify({ time: Date.now(), data: j.results }));
+  return j.results;
+}
+
+function renderFor(date, all) {
+  const cards = document.getElementById("cards");
+  const status = document.getElementById("status");
+  cards.innerHTML = "";
+
+  const day = localDay(date);
+  const matches = all.filter(l => localDay(new Date(l.net)) === day);
+
+  if (!matches.length) {
+    status.textContent = `No launches scheduled for ${day} (based on published schedules).`;
+    return;
+  }
+
+  status.textContent = `Showing ${matches.length} launch(es) for ${day}.`;
+
+  matches.sort((a,b)=>new Date(a.net)-new Date(b.net));
+
+  for (const L of matches) {
+    const m = L.mission || {};
+    const p = L.pad || {};
+    const loc = p.location || {};
+    const div = document.createElement("div");
+    div.className = "card";
+    div.innerHTML = `
+      <span class="badge">${new Date(L.net).toLocaleString()}</span>
+      <span class="badge">${L.launch_service_provider?.name || "Unknown"}</span>
+      <h3>${L.name}</h3>
+      <div><b>Mission:</b> ${m.name || "TBD"}</div>
+      <div><b>Orbit:</b> ${m.orbit?.name || "Unknown"}</div>
+      <div><b>Location:</b> ${loc.name || "Unknown"}</div>
+      <div style="margin-top:8px">${m.description || "Details TBD."}</div>
+      <div style="margin-top:10px"><a href="${L.url}" target="_blank">More info</a></div>
+    `;
+    cards.appendChild(div);
+  }
+}
+
+let allLaunches = null;
+
+async function load(date) {
+  document.getElementById("status").textContent = "Loading…";
+  try {
+    if (!allLaunches) allLaunches = await fetchOnce();
+    renderFor(date, allLaunches);
+    document.getElementById("lastUpdated").textContent = "Updated: " + new Date().toLocaleTimeString();
+  } catch(e) {
+    document.getElementById("status").textContent = e.message;
+  }
+}
+
+function setPicker(d){ datePicker.value = localDay(d); }
+
+todayBtn.onclick = ()=>{ const d=new Date(); setPicker(d); load(d); };
+tomorrowBtn.onclick = ()=>{ const d=new Date(); d.setDate(d.getDate()+1); setPicker(d); load(d); };
+refreshBtn.onclick = ()=>load(new Date(datePicker.value+"T00:00:00"));
+datePicker.onchange = ()=>load(new Date(datePicker.value+"T00:00:00"));
+
+const start = new Date();
+setPicker(start);
+load(start);
+</script>
+</body>
+</html>
